@@ -1,0 +1,17 @@
+{
+  "model_name": "mnist-8",
+  "layers": [
+    {
+      "name": "flatten_1",
+      "type": "flatten"
+    },
+    {
+      "name": "fc1",
+      "type": "linear",
+      "in_features": 256,
+      "out_features": 10,
+      "weight_mem": "src/rtl/systemverilog/mem/fc1_weights_packed.mem",
+      "bias_mem": "src/rtl/systemverilog/mem/fc1_biases.mem"
+    }
+  ]
+}

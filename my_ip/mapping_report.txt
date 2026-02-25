@@ -1,0 +1,38 @@
+RTL Mapping Report
+================================================================================
+
+Model: mnist-8
+Scale Factor: 256
+Data Width: 16
+Weight Width: 16
+Accumulator Width: 32
+Fractional Bits: 8
+
+Layer Mapping:
+--------------------------------------------------------------------------------
+ 1. flatten_1            flatten    (pass-through in streaming)
+
+ 2. fc1                  linear     in_features= 256 out_features=  10
+     Weights: SIM/fc1_weights_packed.mem
+     Biases:  SIM/fc1_biases.mem
+
+Generated Files (my_ip-style layout):
+--------------------------------------------------------------------------------
+RTL Modules (under src/rtl/systemverilog):
+  - src/rtl/systemverilog/quant_pkg.sv
+  - src/rtl/systemverilog/mac.sv
+  - src/rtl/systemverilog/fc_in.sv
+  - src/rtl/systemverilog/fc_out.sv
+  - src/rtl/systemverilog/relu_layer.sv
+  - src/rtl/systemverilog/fc_layer_fc1.sv
+  - src/rtl/systemverilog/weight_rom_fc1.sv
+  - src/rtl/systemverilog/bias_rom_fc1.sv
+  - src/rtl/systemverilog/mnist-8_top.sv
+
+Memory Files (quant_pkg format, same as Desktop/rtl):
+  - src/rtl/systemverilog/mem/fc1_weights_packed.mem
+  - src/rtl/systemverilog/mem/fc1_biases.mem
+
+Simulation:
+  - Run simulation from the IP root (e.g. my_ip/) so $readmemh paths resolve.
+  - Compile with +define+Q_INT16 (or Q_INT4/Q_INT8) for quant_pkg.
