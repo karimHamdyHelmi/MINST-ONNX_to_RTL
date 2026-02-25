@@ -25,13 +25,11 @@ if str(_CONVERT_DIR) not in sys.path:
 
 
 def _load_onnx(onnx_path: Path) -> Any:
-    """Load ONNX model using project onnx_lib."""
     import onnx
     return onnx.load(str(onnx_path))
 
 
 def _get_initializers_dict(model: Any) -> Dict[str, np.ndarray]:
-    """Build name -> numpy array mapping for all initializers."""
     from onnx.numpy_helper import to_array
     result = {}
     for init in model.graph.initializer:
@@ -44,14 +42,14 @@ def _get_initializers_dict(model: Any) -> Dict[str, np.ndarray]:
 
 
 def _get_attr(node: Any, name: str, default: Any = None) -> Any:
-    """Get attribute from ONNX node."""
+    """Get attribute from ONNX node, handling different types (INT, FLOAT)"""
     for attr in node.attribute:
         if attr.name == name:
             if attr.type == 2:  # INT
                 return attr.i
             if attr.type == 5:  # FLOAT
                 return attr.f
-            if attr.type == 1:  # FLOAT (legacy)
+            if attr.type == 1:  # FLOAT
                 return attr.f
     return default
 
@@ -62,7 +60,6 @@ def _try_get_matmul_bias_from_add(
     out_features: int,
     name_to_init: Dict[str, np.ndarray],
 ) -> Optional[np.ndarray]:
-    """If MatMul is followed by Add with constant bias, return it."""
     matmul_out = matmul_node.output[0]
     for node in model.graph.node:
         if node.op_type != "Add" or len(node.input) < 2:
@@ -70,7 +67,6 @@ def _try_get_matmul_bias_from_add(
         inputs = list(node.input)
         if matmul_out not in inputs:
             continue
-        # Add(A, B): one is matmul output, other is bias
         other = inputs[1] if inputs[0] == matmul_out else inputs[0]
         if other in name_to_init:
             b = name_to_init[other].flatten()
@@ -81,10 +77,7 @@ def _try_get_matmul_bias_from_add(
 
 
 def _build_value_to_array(model: Any, inits: Dict[str, np.ndarray]) -> Dict[str, np.ndarray]:
-    """
-    Build value name -> numpy array. Includes initializers and outputs of
-    Reshape/Constant nodes (e.g. weight from Reshape(Parameter193, shape)).
-    """
+    
     from onnx.numpy_helper import to_array
     result: Dict[str, np.ndarray] = dict(inits)
     for node in model.graph.node:
@@ -104,11 +97,7 @@ def _build_value_to_array(model: Any, inits: Dict[str, np.ndarray]) -> Dict[str,
 
 
 def extract_layers_from_onnx(onnx_path: Path) -> Tuple[List[Any], int]:
-    """
-    Extract linear (Gemm/MatMul/QLinearMatMul/QLinearGemm) layers from ONNX graph.
-    Returns (list of layer dicts with weight, bias, in_features, out_features), input_size.
-    Supports weights from Reshape (e.g. LeNet-style CNN->FC).
-    """
+   
     model = _load_onnx(onnx_path)
     inits = _get_initializers_dict(model)
     name_to_init = _build_value_to_array(model, inits)
@@ -127,7 +116,6 @@ def extract_layers_from_onnx(onnx_path: Path) -> Tuple[List[Any], int]:
             inputs = list(node.input)
 
             if is_qlinear_matmul or is_qlinear_gemm:
-                # QLinearMatMul/QLinearGemm: a, a_scale, a_zp, b, b_scale, b_zp, y_scale, y_zp, [B]
                 if len(inputs) < 8:
                     LOGGER.warning(f"{node.op_type} node {node.name} has < 8 inputs, skipping")
                     continue
@@ -136,7 +124,6 @@ def extract_layers_from_onnx(onnx_path: Path) -> Tuple[List[Any], int]:
                 b_zp_name = inputs[5]
                 bias_name = inputs[8] if len(inputs) >= 9 else None
             else:
-                # Gemm: a, b, c (optional)
                 if len(inputs) < 2:
                     LOGGER.warning(f"Gemm node {node.name} has < 2 inputs, skipping")
                     continue
@@ -162,7 +149,6 @@ def extract_layers_from_onnx(onnx_path: Path) -> Tuple[List[Any], int]:
             else:
                 w_np = w_np.astype(np.float32)
 
-            # MatMul/Gemm: B is [K,N] = [in, out]. Our format: [out_features, in_features]
             in_features, out_features = w_np.shape
             weight = w_np.T.astype(np.float32)
 
@@ -179,7 +165,6 @@ def extract_layers_from_onnx(onnx_path: Path) -> Tuple[List[Any], int]:
             if bias_name and bias_name in name_to_init:
                 b_init = name_to_init[bias_name].flatten()
                 if is_qlinear_matmul or is_qlinear_gemm:
-                    # Bias in QLinearGemm is typically pre-scaled; use as-is if float
                     bias_np = b_init.astype(np.float32)
                 elif b_init.dtype in (np.int8, np.uint8, np.int16, np.uint16):
                     bias_np = b_init.astype(np.float32) / 256.0
@@ -208,7 +193,6 @@ def extract_layers_from_onnx(onnx_path: Path) -> Tuple[List[Any], int]:
             })
 
         elif node.op_type == "MatMul":
-            # MatMul (e.g. classifier after Conv, or FC-only). Weight may come from Reshape.
             inputs = list(node.input)
             if len(inputs) < 2:
                 continue
@@ -225,7 +209,6 @@ def extract_layers_from_onnx(onnx_path: Path) -> Tuple[List[Any], int]:
             fc_counter += 1
             in_features, out_features = w_np.shape
             weight = w_np.T.astype(np.float32)
-            # Bias may come from following Add node (MatMul -> Add)
             bias_np = _try_get_matmul_bias_from_add(model, node, out_features, name_to_init)
             if bias_np is None:
                 bias_np = np.zeros((out_features,), dtype=np.float32)
@@ -333,7 +316,7 @@ def main() -> int:
 
     LOGGER.info(f"Found {len(layers_raw)} linear layers, input_size={input_size}")
 
-    # 3. Build LayerInfo and quantize (reuse rtl_mapper logic)
+    # 3. Build LayerInfo and quantize
     from rtl_mapper import (
         LayerInfo,
         float_to_int,
@@ -365,7 +348,7 @@ def main() -> int:
         )
         layers.append(layer)
 
-    # Build full layer list: flatten, fc1, relu, fc2, relu, fc3 (rtl_mapper expects relu between fc)
+    # Build full layer list: flatten, fc1, relu, fc2, relu, fc3
     flatten = LayerInfo(name="flatten_1", layer_type="flatten", out_shape=(1, input_size))
     full_layers: List[LayerInfo] = [flatten]
     for i, layer in enumerate(layers):
